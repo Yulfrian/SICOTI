@@ -21,6 +21,11 @@ jobs:
       - name: Dar permisos al script
         run: chmod +x sicoti-project-setup.sh
 
+      - name: Crear etiqueta SICOTI si no existe
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: gh label create SICOTI --force || true
+
       - name: Ejecutar configuración del proyecto
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
