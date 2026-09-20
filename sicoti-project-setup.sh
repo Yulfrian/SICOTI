@@ -11,6 +11,12 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v jq >/dev/null 2>&1; then
+  echo "jq no está instalado o no está en PATH."
+  echo "Instálalo y vuelve a ejecutar el script."
+  exit 1
+fi
+
 if ! gh auth status >/dev/null 2>&1; then
   echo "No estás autenticado en GitHub CLI. Ejecuta: gh auth login"
   exit 1
@@ -22,6 +28,11 @@ PROJECT_ID="$(gh project view "$PROJECT_NUMBER" --owner "$OWNER" --format json |
 field_id() {
   local field_name="$1"
   echo "$FIELDS_JSON" | jq -r --arg name "$field_name" '.fields[] | select(.name == $name) | .id' | head -n 1
+}
+
+field_type() {
+  local field_name="$1"
+  echo "$FIELDS_JSON" | jq -r --arg name "$field_name" '.fields[] | select(.name == $name) | .dataType' | head -n 1
 }
 
 option_id() {
@@ -36,22 +47,57 @@ option_id() {
   ' | head -n 1
 }
 
+refresh_fields() {
+  FIELDS_JSON="$(gh project field-list "$PROJECT_NUMBER" --owner "$OWNER" --format json)"
+}
+
 ensure_single_select_field() {
   local field_name="$1"
   local options_csv="$2"
   local field_id_value
+  local existing_type
   field_id_value="$(field_id "$field_name")"
 
   if [[ -z "$field_id_value" || "$field_id_value" == "null" ]]; then
-    echo "Creando campo: $field_name"
+    echo "Creando campo SINGLE_SELECT: $field_name"
     gh project field-create "$PROJECT_NUMBER" \
       --owner "$OWNER" \
       --title "$field_name" \
       --data-type "SINGLE_SELECT" \
       --single-select-options "$options_csv" >/dev/null
-    FIELDS_JSON="$(gh project field-list "$PROJECT_NUMBER" --owner "$OWNER" --format json)"
+    refresh_fields
   else
+    existing_type="$(field_type "$field_name")"
+    if [[ "$existing_type" != "SINGLE_SELECT" ]]; then
+      echo "El campo '$field_name' ya existe, pero es de tipo '$existing_type' y se esperaba SINGLE_SELECT."
+      exit 1
+    fi
     echo "Campo existente: $field_name"
+  fi
+}
+
+ensure_date_field() {
+  local field_name="$1"
+  local field_id_value
+  local existing_type
+  field_id_value="$(field_id "$field_name")"
+
+  if [[ -z "$field_id_value" || "$field_id_value" == "null" ]]; then
+    echo "Creando campo DATE: $field_name"
+    gh project field-create "$PROJECT_NUMBER" \
+      --owner "$OWNER" \
+      --title "$field_name" \
+      --data-type "DATE" >/dev/null
+    refresh_fields
+  else
+    existing_type="$(field_type "$field_name")"
+    if [[ "$existing_type" != "DATE" ]]; then
+      echo "El campo '$field_name' ya existe, pero es de tipo '$existing_type'."
+      echo "GitHub Projects no permite cambiar el tipo de un campo existente desde este script."
+      echo "Elimina o renombra el campo SINGLE_SELECT '$field_name' en el proyecto y vuelve a ejecutar el script."
+      exit 1
+    fi
+    echo "Campo DATE existente: $field_name"
   fi
 }
 
@@ -59,11 +105,7 @@ ensure_single_select_field "Tipo" "Arquitectura,Modelado,Interfaz,Requisito,Ajus
 ensure_single_select_field "Prioridad" "Alta,Media,Baja"
 ensure_single_select_field "Responsable (Rol)" "Apoyo Técnico,Responsable de Modelado,Analista,Responsable del Tablero,Resp. de Documentación"
 ensure_single_select_field "Status" "Backlog,Por hacer,En progreso,En revisión,Finalizado"
-ensure_single_select_field "Fecha Estimada" "2026-09-20,2026-09-22,2026-09-24,2026-09-26,2026-09-28,2026-09-30,2026-10-02,2026-10-04,2026-10-10,2026-10-15"
-
-# NOTA: "Fecha Estimada" en Project V2 no debe ser un SINGLE_SELECT si se quiere usar una fecha real.
-# En una configuración ideal, este campo debe configurarse como DATE. Si quieres dejarlo como DATE,
-# elimina esa línea anterior y usa `gh project field-create ... --data-type DATE` para este campo.
+ensure_date_field "Fecha Estimada"
 
 TYPE_FIELD_ID="$(field_id "Tipo")"
 PRIORITY_FIELD_ID="$(field_id "Prioridad")"
@@ -89,6 +131,10 @@ if [[ -z "$STATUS_FIELD_ID" || "$STATUS_FIELD_ID" == "null" ]]; then
 fi
 if [[ -z "$DATE_FIELD_ID" || "$DATE_FIELD_ID" == "null" ]]; then
   echo "Falta el campo Fecha Estimada. Revisa la configuración del proyecto."
+  exit 1
+fi
+if [[ "$(field_type "Fecha Estimada")" != "DATE" ]]; then
+  echo "El campo Fecha Estimada no es de tipo DATE."
   exit 1
 fi
 
@@ -158,7 +204,6 @@ EOF
     --field-id "$STATUS_FIELD_ID" \
     --single-select-option-id "$status_opt" >/dev/null
 
-  # Si el campo Fecha Estimada está definido como DATE, usar esta línea en lugar de la de SINGLE_SELECT
   gh project item-edit \
     --id "$item_id" \
     --project-id "$PROJECT_ID" \
