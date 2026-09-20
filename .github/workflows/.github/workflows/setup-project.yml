@@ -1,0 +1,27 @@
+name: Configurar proyecto SICOTI
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup-project:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      repository-projects: write
+
+    steps:
+      - name: Clonar repositorio
+        uses: actions/checkout@v4
+
+      - name: Instalar GitHub CLI
+        uses: cli/gh-action@v2
+
+      - name: Dar permisos al script
+        run: chmod +x sicoti-project-setup.sh
+
+      - name: Ejecutar configuración del proyecto
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: ./sicoti-project-setup.sh
