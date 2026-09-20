@@ -16,7 +16,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Instalar GitHub CLI
-        uses: cli/gh-action@v2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gh
 
       - name: Dar permisos al script
         run: chmod +x sicoti-project-setup.sh
