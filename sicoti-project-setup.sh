@@ -7,32 +7,54 @@ REPO="Yulfrian/SICOTI"
 
 if ! command -v gh >/dev/null 2>&1; then
   echo "GitHub CLI (gh) no está instalado o no está en PATH."
-  echo "Instálalo y ejecuta: gh auth login"
   exit 1
 fi
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "jq no está instalado o no está en PATH."
-  echo "Instálalo y vuelve a ejecutar el script."
   exit 1
 fi
 
+if [[ -n "${GH_TOKEN:-}" ]]; then
+  export GH_TOKEN
+fi
+
 if ! gh auth status >/dev/null 2>&1; then
-  echo "No estás autenticado en GitHub CLI. Ejecuta: gh auth login"
+  echo "No estás autenticado en GitHub CLI o no hay GH_TOKEN válido."
   exit 1
 fi
+
+gh label create SICOTI --force >/dev/null 2>&1 || true
 
 FIELDS_JSON="$(gh project field-list "$PROJECT_NUMBER" --owner "$OWNER" --format json)"
 PROJECT_ID="$(gh project view "$PROJECT_NUMBER" --owner "$OWNER" --format json | jq -r '.id')"
 
 field_id() {
   local field_name="$1"
-  echo "$FIELDS_JSON" | jq -r --arg name "$field_name" '.fields[] | select(.name == $name) | .id' | head -n 1
+  echo "$FIELDS_JSON" | jq -r --arg name "$field_name" '
+    .fields[] | select(.name == $name) | .id
+  ' | head -n 1
 }
 
 field_type() {
   local field_name="$1"
-  echo "$FIELDS_JSON" | jq -r --arg name "$field_name" '.fields[] | select(.name == $name) | .dataType' | head -n 1
+
+  echo "$FIELDS_JSON" | jq -r --arg name "$field_name" '
+    .fields[]
+    | select(.name == $name)
+    | (
+        .dataType // .type // .fieldType // empty
+      )
+  ' | head -n 1
+}
+
+field_has_options() {
+  local field_name="$1"
+  echo "$FIELDS_JSON" | jq -r --arg name "$field_name" '
+    .fields[]
+    | select(.name == $name)
+    | if (.options != null) then "yes" else "no" end
+  ' | head -n 1
 }
 
 option_id() {
@@ -66,14 +88,18 @@ ensure_single_select_field() {
       --data-type "SINGLE_SELECT" \
       --single-select-options "$options_csv" >/dev/null
     refresh_fields
-  else
-    existing_type="$(field_type "$field_name")"
-    if [[ "$existing_type" != "SINGLE_SELECT" ]]; then
-      echo "El campo '$field_name' ya existe, pero es de tipo '$existing_type' y se esperaba SINGLE_SELECT."
-      exit 1
-    fi
-    echo "Campo existente: $field_name"
+    return
   fi
+
+  existing_type="$(field_type "$field_name")"
+
+  if [[ -n "${existing_type}" && "${existing_type}" != "SINGLE_SELECT" ]]; then
+    echo "El campo '$field_name' ya existe, pero es de tipo '$existing_type' y se esperaba SINGLE_SELECT."
+    echo "No se puede cambiar el tipo del campo automáticamente desde gh."
+    exit 1
+  fi
+
+  echo "Campo existente: $field_name"
 }
 
 ensure_date_field() {
@@ -89,16 +115,19 @@ ensure_date_field() {
       --title "$field_name" \
       --data-type "DATE" >/dev/null
     refresh_fields
-  else
-    existing_type="$(field_type "$field_name")"
-    if [[ "$existing_type" != "DATE" ]]; then
-      echo "El campo '$field_name' ya existe, pero es de tipo '$existing_type'."
-      echo "GitHub Projects no permite cambiar el tipo de un campo existente desde este script."
-      echo "Elimina o renombra el campo SINGLE_SELECT '$field_name' en el proyecto y vuelve a ejecutar el script."
-      exit 1
-    fi
-    echo "Campo DATE existente: $field_name"
+    return
   fi
+
+  existing_type="$(field_type "$field_name")"
+
+  if [[ -n "${existing_type}" && "${existing_type}" != "DATE" ]]; then
+    echo "El campo '$field_name' ya existe, pero es de tipo '$existing_type'."
+    echo "GitHub Projects no permite cambiar el tipo de un campo existente desde este script."
+    echo "Elimina o renombra el campo '$field_name' en el proyecto y vuelve a ejecutar el script."
+    exit 1
+  fi
+
+  echo "Campo DATE existente: $field_name"
 }
 
 ensure_single_select_field "Tipo" "Arquitectura,Modelado,Interfaz,Requisito,Ajustes,Pruebas"
@@ -131,10 +160,6 @@ if [[ -z "$STATUS_FIELD_ID" || "$STATUS_FIELD_ID" == "null" ]]; then
 fi
 if [[ -z "$DATE_FIELD_ID" || "$DATE_FIELD_ID" == "null" ]]; then
   echo "Falta el campo Fecha Estimada. Revisa la configuración del proyecto."
-  exit 1
-fi
-if [[ "$(field_type "Fecha Estimada")" != "DATE" ]]; then
-  echo "El campo Fecha Estimada no es de tipo DATE."
   exit 1
 fi
 
@@ -225,4 +250,5 @@ create_card "Implementar filtros por categoría en catálogo" "Interfaz" "Baja" 
 create_card "Integración de escáner de código de barras en POS" "Ajustes" "Alta" "Apoyo Técnico" "2026-10-10" "Backlog"
 create_card "Pruebas de latencia y rendimiento de la API REST" "Pruebas" "Alta" "Analista" "2026-10-15" "Backlog"
 
+echo "Proceso finalizado. Comprueba la vista del proyecto: https://github.com/users/Yulfrian/projects/2/views/1"
 echo "Proceso finalizado. Comprueba la vista del proyecto: https://github.com/users/Yulfrian/projects/2/views/1"
